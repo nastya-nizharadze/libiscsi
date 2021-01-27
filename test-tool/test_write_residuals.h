@@ -26,8 +26,12 @@ struct residuals_test_data {
   unsigned int buf_len;
   unsigned int residuals_kind;
   size_t residuals_amount;
-  bool check_overwrite;
   const char *log_messages;
+};
+
+struct task_status {
+  int status;
+  struct scsi_sense sense;
 };
 
 extern bool command_is_implemented;

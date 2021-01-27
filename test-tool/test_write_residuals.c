@@ -34,6 +34,7 @@ write_residuals_test(const struct residuals_test_data *tdata)
         struct iscsi_data data;
         struct scsi_task *task_ret;
         int ok;
+        int scsi_status;
         unsigned int xfer_len_byte = 8;
         unsigned int i;
         unsigned int scsi_opcode_write = SCSI_OPCODE_WRITE10;
@@ -81,9 +82,9 @@ write_residuals_test(const struct residuals_test_data *tdata)
         memset(task, 0, sizeof(*task));
 
         if (tdata->check_overwrite) {
-                memset(scratch, 'b', (tdata->xfer_len * tdata->buf_len));
+                memset(scratch, 'b', tdata->buf_len);
         } else {
-                memset(scratch, 0xa6, (tdata->xfer_len * tdata->buf_len));
+                memset(scratch, 0xa6, tdata->buf_len);
         }
 
         task->cdb[0] = scsi_opcode_write;
@@ -104,11 +105,14 @@ write_residuals_test(const struct residuals_test_data *tdata)
             task->sense.ascq == SCSI_SENSE_ASCQ_INVALID_OPERATION_CODE) {
                 logging(LOG_NORMAL, "[SKIPPED] WRITE%zu is not implemented.", tdata->cdb_size);
                 command_is_implemented = false;
+                scsi_free_scsi_task(task);
+                task = NULL;
                 return;
         }
 
         logging(LOG_VERBOSE, "Verify that target returns SUCCESS or INVALID "
                 "FIELD IN INFORMATION UNIT");
+        scsi_status = task->status;
         ok = task->status     == SCSI_STATUS_GOOD ||
             (task->status     == SCSI_STATUS_CHECK_CONDITION &&
              task->sense.key  == SCSI_SENSE_ILLEGAL_REQUEST &&
@@ -155,6 +159,26 @@ write_residuals_test(const struct residuals_test_data *tdata)
                 READ16(sd, NULL, 0, 2* block_size, block_size, 0, 0, 0, 0, 0,
                        scratch, EXPECT_STATUS_GOOD);
                 break;
+        }
+
+        /* According to FCP target could transfer no data and return 
+           CHECK CONDITION status with the sense key set to 
+           ILLEGAL REQUEST and the additional sense code set to 
+           INVALID FIELD IN COMMAND INFORMATION UNIT; this check prevent
+           false assert*/
+
+        if (scsi_status != SCSI_STATUS_GOOD) {
+                logging(LOG_VERBOSE, "Verify that blocks were NOT "
+                        "overwritten and still contain 'a'");
+                for (i = 0; i < 2 * block_size; i++) {
+                        if (scratch[i] != 'a') {
+                                logging(LOG_NORMAL, "Blocks were overwritten "
+                                        "and no longer contain 'a'");
+                                CU_FAIL("Blocks were incorrectly overwritten");
+                                break;
+                        }
+                }
+                return;
         }
 
         logging(LOG_VERBOSE, "Verify that the first block was changed to 'b'");
